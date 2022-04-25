@@ -74,9 +74,6 @@ class Client: # Client's communication is synchronous: It can not send a request
                         number_of_messages = reply_received(received_message["request"],received_message["result"])
                         print("Client %d got reply within %f seconds. The network exchanged %d messages" % (self.client_id,duration,number_of_messages))
                         self.sent_requests_without_answer.remove(received_message["request"])
-                        #s.close()
-                        #sys.exit()
-                    
 
     def send_to_primary (self,request,primary_node_id,nodes_ids_list,f): # Sends a request to the primary and waits for f+1 similar answers
         primary_node_port = nodes_ports[primary_node_id]

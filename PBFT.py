@@ -1,14 +1,10 @@
-from concurrent.futures import process
 import threading
 from threading import Lock
 import socket
 import json
 import time
 import hashlib
-import sys
 from cmath import inf
-import math
-
 
 nodes_ports = [(30000 + i) for i in range (0,2000)]
 
@@ -22,7 +18,6 @@ checkpoint_format_file = "checkpoint_format.json"
 checkpoint_vote_format_file = "checkpoint_vote_format.json"
 view_change_format_file = "view_change_format.json"
 new_view_format_file = "new_view_format.json"
-
 
 def run_PBFT(nodes,checkpoint_frequency0,clients_ports0,timer_limit_before_view_change0): # All the nodes participate in the consensus
 
@@ -93,8 +88,16 @@ def run_PBFT(nodes,checkpoint_frequency0,clients_ports0,timer_limit_before_view_
     global consensus_nodes # ids of nodes participating in the consensus
     consensus_nodes=[]
 
-    threading.Thread(target=run_nodes,args=(nodes,)).start()
+    global new_nodes # ids of new nodes that join the network
+    new_nodes=[]
 
+    global slow_nodes # ids of new nodes that proved to be slow in comparision to other nodes
+    slow_nodes=[]
+
+    global malicious_nodes # ids of new nodes that behaved maliciously
+    malicious_nodes=[] 
+
+    threading.Thread(target=run_nodes,args=(nodes,)).start()
 
 def run_nodes(nodes):
     global j
@@ -116,28 +119,32 @@ def run_nodes(nodes):
                     node=FaultyPrimary(node_id=j)
                 elif (node_type=="slow_nodes"):
                     node=SlowNode(node_id=j)
+                elif (node_type=="faulty_node"):
+                    node=FaultyNode(node_id=j)
                 nodes_list.append(node)
                 the_nodes_ids_list.append(j)
-                consensus_nodes.append(j)
                 connection_quality.append(10) # Initiate the node quality connection with 10
                 response_delay.append(inf) # Initiate th response delay with inf
                 credibility.append(10) # Credibility initiated with 10
                 processed_messages.append(0)
                 messages_processing_rate.append(0) # Initiated with 0
                 scores.append(0)
+                if waiting_time == 0:
+                    consensus_nodes.append(j)
+                    n = n + 1
+                    f = (n - 1) // 3
+                else:
+                    new_nodes.append(j)
                 threading.Thread(target=node.receive,args=()).start()
                 #print("%s node %d started" %(node_type,j))
-                n = n + 1
-                f = (n - 1) // 3
                 j=j+1
 
 # Update consensus nodes
-def update_consensus_nodes():    # We only keep nodes with the highest scores, with a number of nodes between min_nodes and max_nodes. Once we have min_nodes (4 nodes), we only take nodes with scores>=0.5
+def update_consensus_nodes():    # We only keep nodes with the highest scores, with a number of nodes between min_nodes and max_nodes.
     global consensus_nodes
+    global new_nodes
     min_nodes=4
     max_nodes=len(the_nodes_ids_list)//2
-   
-
     remaining_nodes_scores = []
     for i in range (len(scores)):
         remaining_nodes_scores.append(scores[i])
@@ -154,45 +161,43 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
   
     if (min_nodes<max_nodes):
         for i in range (min_nodes,max_nodes):
-            
             if len(remaining_nodes_scores) > 0:
                 max_score =  max(remaining_nodes_scores)            
                 for j in range (len(scores)):
-                 
                     if scores[j] == max_score and len(consensus_nodes)<max_nodes:
-                        
                         consensus_nodes.append(j)
                         remaining_nodes_scores.remove(max_score)
-    
+
+    # Add one of the new nodes to the consensus nodes set if there are new nodes
+    if (len(new_nodes)>0):
+        new_node = new_nodes[0]
+        consensus_nodes.append(new_node)
+        new_nodes.remove(new_node)
+
+    # Put other nodes in slow nodes set:
+    global slow_nodes
+    slow_nodes=[]
+    #while len(remaining_nodes_scores) > 0:
+    for score in remaining_nodes_scores:
+        for j in range (len(scores)):
+            if (scores[j] == score) and (j not in malicious_nodes) and (j not in new_nodes) and (j not in slow_nodes) and (j not in consensus_nodes):
+                slow_nodes.append(j)
+                remaining_nodes_scores.remove(score)
+                break
+
     consensus_nodes.sort()
+
     global n
     n = len(consensus_nodes)
-
-    consensus_nodes = [i for i in range (n)]
-
     global f
     f = (len(consensus_nodes) - 1) // 3
-
-    print(consensus_nodes)
-    print(scores)
-
 '''
-
-    for i in range (min_nodes,max_nodes):
-        if len(remaining_nodes_scores) > 0:
-            max_score =  max(remaining_nodes_scores)            
-            if (max_score)>=0.4:               
-                for j in range (len(scores)):
-                    if scores[j] == max_score:
-                        consensus_nodes.append(j)
-                        remaining_nodes_scores.remove(max_score)
-            else:
-                break
+    print("consensus_nodes:",consensus_nodes)
+    print("new_nodes:",new_nodes)
+    print("slow_nodes:",slow_nodes)
+    print("malicious_nodes:",malicious_nodes)
 '''
-
-
-    
-    
+ 
 def reply_received(request,reply): # This method tells the nodes that the client received its reply so that they can know the accepted reply
     global scores
     replied_requests[request] = 1
@@ -204,30 +209,13 @@ def reply_received(request,reply): # This method tells the nodes that the client
                 response_delay[i]=node.replies_time[request][1]
             else:
                 response_delay[i]=(response_delay[i]+node.replies_time[request][1])/2 # We take the mean of the delays
-      
-        #scores[i] = (scores[i] + (connection_quality[i]*credibility[i])/(100*math.exp(response_delay[i]))) / 2
-        scores[i] = (scores[i] + (connection_quality[i]*credibility[i])/((response_delay[i])**2)) / 2
-
-    # Normalizing scores:
-
-    '''
-    
-    min_scores = min (scores)
-    max_scores = max(scores)
-
-    for i in range(len(scores)):
-        scores[i] = (scores[i]-min_scores)/(max_scores-min_scores)
-        #scores[i] = (scores[i])/(max_scores)
-    '''
-    
-
+        scores[i] = (scores[i] + (connection_quality[i]*credibility[i])/((response_delay[i]))) / 2
+        if (scores[i] < 0 and i not in malicious_nodes):
+            malicious_nodes.append(i)
+            if i in consensus_nodes:
+                consensus_nodes.remove(i)
  
-    update_consensus_nodes()  
-    
-
-    #print("1) scores",scores)
-    #print("consensus_nodes",consensus_nodes)
-    #print("1) response_delay",response_delay)
+    update_consensus_nodes()
 
     return number_of_messages[request]
 
@@ -240,33 +228,17 @@ def another_received_reply(request,answering_node_id):
                 response_delay[i]=node.replies_time[request][1]
             else:
                 response_delay[i]=(response_delay[i]+node.replies_time[request][1])/2 # We take the mean of the delays
-    #print((response_delay[i]))
-    scores[i] = (scores[i] + (connection_quality[i]*credibility[i])/((response_delay[i])**2)) / 2
-    update_consensus_nodes()
+    scores[i] = (scores[i] + (connection_quality[i]*credibility[i])/((response_delay[i]))) / 2
 
-    # Normalizing scores:
-    '''
-    
-    min_scores = min (scores)
-    max_scores = max(scores)
-
-    for i in range(len(scores)):
-        #scores[i] = (scores[i]-min_scores)/(max_scores-min_scores)
-        scores[i] = (scores[i])/(max_scores)
-    '''
-    
- 
-    
-
-    #print("2) scores",scores)
-    #print("consensus_nodes",consensus_nodes)
-    #print("2) response_delay",response_delay)
+    if (scores[i] < 0 and i not in malicious_nodes):
+        malicious_nodes.append(i)
+        if i in consensus_nodes:
+            consensus_nodes.remove(i)
 
 def get_primary_id():
     node_0=nodes_list[0]
     #print(node_0.primary_node_id)
     return node_0.primary_node_id
-
 
 def get_nodes_ids_list():
     return consensus_nodes
@@ -307,9 +279,7 @@ class Node():
         self.asked_view_change = [] # view numbers the node asked for
 
     def process_received_message(self,received_message,waiting_time):
-
             global total_processed_messages
-
             message_type = received_message["message_type"]
             if (message_type=="REQUEST"):
                 if(received_message["request"] not in number_of_messages):
@@ -318,13 +288,10 @@ class Node():
                     self.accepted_requests_time[(received_message["request"])]=time.time()
                 if (received_message["request"] not in replied_requests):
                     replied_requests[received_message["request"]]=0
-                
                 timestamp = received_message["timestamp"]
                 client_id = received_message["client_id"]
                 if (client_id not in self.last_reply_timestamp or timestamp > self.last_reply_timestamp[client_id]): # The request is only processed if its timestamp is greater than teh timestamp of the last request that the node responded to
-                    
                     if (self.node_id==self.primary_node_id):
-                        
                         # S'assurer que le message est bon , digest....
                         client_id = received_message["client_id"]
                         actual_timestamp = received_message["timestamp"]
@@ -332,24 +299,19 @@ class Node():
                             last_timestamp = requests[client_id]
                         else:
                             last_timestamp = 0
-
                         if ((last_timestamp<actual_timestamp)or(last_timestamp==actual_timestamp and (received_message["request"] != reply["request"] for reply in self.message_reply))):
                             requests[client_id] = actual_timestamp
                             self.message_log.append(received_message)
                             self.broadcast_preprepare_message(request_message=received_message,nodes_ids_list=consensus_nodes)
-                     
                     else:
                         self.send(destination_node_id=self.primary_node_id,message=received_message)
             elif (message_type=="PREPREPARE"):
-
                 node_id = received_message["node_id"]
-
                 request = received_message["request"]
                 digest = hashlib.sha256(request.encode()).hexdigest()
                 requests_digest = received_message["request_digest"]
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
-                    credibility[node_id] -= 0.5
-                
+                    credibility[node_id] -= 1
                 total_processed_messages += 1
                 processed_messages[node_id] += 1
                 messages_processing_rate[node_id]=processed_messages[node_id]/total_processed_messages
@@ -364,7 +326,7 @@ class Node():
                 tuple = (view,received_message["sequence_number"])
 
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
-                    credibility[node_id] -= 0.5
+                    credibility[node_id] -= 1
 
                 # Making sure the digest's request is good + the view number in the message is similar to the view number of the node + We did not broadcast a message with the same view number and sequence number
                 if ((digest==requests_digest) and (view==self.view_number)): 
@@ -375,8 +337,7 @@ class Node():
                         self.message_log.append(received_message)
                         self.preprepares[tuple]=digest 
                         self.broadcast_prepare_message(preprepare_message=received_message,nodes_ids_list=consensus_nodes)
-                    
-                    
+                       
             elif (message_type=="PREPARE"):
 
                 total_processed_messages += 1
@@ -388,7 +349,7 @@ class Node():
                 digest = hashlib.sha256(request.encode()).hexdigest()
                 requests_digest = received_message["request_digest"]
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
-                    credibility[node_id] -= 0.5
+                    credibility[node_id] -= 1
 
                 number_of_messages[received_message["request"]] = number_of_messages[received_message["request"]] + 1
                 timestamp = received_message["timestamp"]
@@ -434,7 +395,7 @@ class Node():
                 digest = hashlib.sha256(request.encode()).hexdigest()
                 requests_digest = received_message["request_digest"]
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
-                    credibility[node_id] -= 0.5
+                    credibility[node_id] -= 1
 
                 number_of_messages[received_message["request"]] = number_of_messages[received_message["request"]] + 1
                 timestamp = received_message["timestamp"]
@@ -492,6 +453,7 @@ class Node():
                                 self.checkpoints_sequence_number.append(sequence_number)
                                 self.broadcast_message(consensus_nodes,checkpoint_message)
                                 self.checkpoints[str(checkpoint_message)]=[self.node_id]
+
             elif (message_type=="CHECKPOINT"):
                 lock = Lock()
                 lock.acquire()
@@ -509,6 +471,7 @@ class Node():
                             checkpoint_vote_message["node_id"] = self.node_id
                             self.send(received_message["node_id"],checkpoint_vote_message) 
                 lock.release()
+
             elif (message_type=="VOTE"):
                 lock = Lock()
                 lock.acquire()
@@ -532,7 +495,6 @@ class Node():
                                         if (message["sequence_number"]<= checkpoint["sequence_number"]):
                                             self.message_log.remove(message)
                                 break
-                
                 lock.release()
 
             elif (message_type=="VIEW-CHANGE"):
@@ -542,16 +504,12 @@ class Node():
                     if new_asked_view not in self.received_view_changes:
                         self.received_view_changes[new_asked_view]=[received_message]
                     else:
-
                         requested_nodes = [] # Nodes that requested changing the view
                         for request in self.received_view_changes[new_asked_view]:
                             requested_nodes.append(request["node_id"])
-                       
                         if node_requester not in requested_nodes:
                             self.received_view_changes[new_asked_view].append(received_message)
-
                     if len(self.received_view_changes[new_asked_view])==2*f:
-                        
 
                         #The primary sends a view-change message for this view if it didn't do it before
                         if new_asked_view not in self.asked_view_change:
@@ -583,7 +541,6 @@ class Node():
                         O = []
                         
                         if (max_s>min_s):
-                        #if(3>2):
 
                             # Creating a preprepare-view message for new_asked_view for each sequence number between max_s and min_s
                             for s in range (min_s,max_s):
@@ -635,7 +592,6 @@ class Node():
                             self.broadcast_message(consensus_nodes,new_view_message)
                             print("New view!")
                           
-
             elif (message_type=="NEW-VIEW"):
                 # TO DO : Make sure about the signature
                 # TO DO : Verify the set O in the new view message
@@ -774,12 +730,9 @@ class Node():
             prepare_message["client_id"]=preprepare_message["client_id"]
             prepare_message["timestamp"]=preprepare_message["timestamp"]
             self.broadcast_message(nodes_ids_list,prepare_message)
-            #self.send(self.node_id,prepare_message)
-
             return prepare_message
 
     def broadcast_commit_message(self,prepare_message,nodes_ids_list,sequence_number): # The node broadcasts a commit message
-        #if (replied_requests[prepare_message["request"]]==0):
             with open(commit_format_file):
                 commit_format= open(commit_format_file)
                 commit_message = json.load(commit_format)
@@ -821,7 +774,6 @@ class Node():
             reply_message = json.load(reply_format)
             reply_format.close()
         reply_message["view_number"]=self.view_number
-        #reply_message["timestamp"]=
         reply_message["client_id"]=client_id
         reply_message["node_id"]=self.node_id
         reply = "Request executed"
@@ -845,7 +797,10 @@ class HonestNode(Node):
         Node.receive(self,waiting_time)
 
 class SlowNode(Node):
-    def receive(self,waiting_time=0.5):
+    #import random
+    #waiting_time = random.uniform(0, 1)
+    waiting_time=0.05
+    def receive(self,waiting_time=waiting_time):
         Node.receive(self,waiting_time)
 
 class NonRespondingNode(Node):
@@ -885,3 +840,26 @@ class FaultyPrimary(Node): # This node changes the client's request digest while
         self.preprepares[tuple]=digest
         self.message_log.append(preprepare_message)
         self.broadcast_message(nodes_ids_list,preprepare_message)
+
+class FaultyNode(Node): # This node changes message digest sending a prepare message
+    def receive(self,waiting_time=0):
+        Node.receive(self,waiting_time)
+    def broadcast_prepare_message(self,preprepare_message,nodes_ids_list): # The node broadcasts a prepare message
+        #if (replied_requests[preprepare_message["request"]]==0):
+            # S'assurer des conditions avant d'envoyer le PREPARE message
+            #prepare_message = prepare_format.read()
+            with open(prepare_format_file):
+                prepare_format= open(prepare_format_file)
+                prepare_message = json.load(prepare_format)
+                prepare_format.close()
+            prepare_message["view_number"]=self.view_number
+            prepare_message["sequence_number"]=preprepare_message["sequence_number"]
+            prepare_message["request_digest"]=preprepare_message["request_digest"]+"aa"
+            prepare_message["request"]=preprepare_message["request"]
+            prepare_message["node_id"]=self.node_id
+            prepare_message["client_id"]=preprepare_message["client_id"]
+            prepare_message["timestamp"]=preprepare_message["timestamp"]
+            self.broadcast_message(nodes_ids_list,prepare_message)
+            #self.send(self.node_id,prepare_message)
+
+            return prepare_message
