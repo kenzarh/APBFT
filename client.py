@@ -2,7 +2,7 @@ import socket
 import json
 import datetime
 import time
-from PBFT import *
+from APBFT import *
 
 nodes_ports = [(30000 + i) for i in range (0,2000)]
 
