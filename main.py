@@ -6,25 +6,28 @@ import time
 
 # Parameters to be defined by the user
 
-waiting_time_before_resending_request = 120 # Time the client will wait before resending the request. This time, it broadcasts the request to all nodes
-timer_limit_before_view_change = 120 # There is no value proposed in the paper so let's fix it to 120s
+waiting_time_before_resending_request = 200 # Time the client will wait before resending the request. This time, it broadcasts the request to all nodes
+timer_limit_before_view_change = 200 # There is no value proposed in the paper so let's fix it to 120s
 checkpoint_frequency = 100 # 100 is the proposed value in the original article
+
+# Define the proportion of nodes we want in the consensus set
+#p = 1/3
+p = 1
 
 # Define the nodes we want in our network + their starting time + their type
 nodes={} # This is a dictionary of nodes we want in our network. Keys are the nodes types, and values are a list of tuples of starting time and number of nodes 
 #nodes[starting time] = [(type of nodes , number of nodes)]
-nodes[0]=[("faulty_primary",0),("honest_node",10),("non_responding_node",0),("slow_nodes",0),("faulty_node",0)] # Nodes starting from the beginning
+nodes[0]=[("faulty_primary",0),("honest_node",20),("non_responding_node",0),("slow_nodes",0),("faulty_node",0)] # Nodes starting from the beginning
 #nodes[1]=[("faulty_primary",0),("honest_node",1),("non_responding_node",0),("slow_nodes",1),("faulty_node",1)] # Nodes starting after 2 seconds
 #nodes[2]=[("faulty_primary",0),("honest_node",0),("non_responding_node",0),("slow_nodes",2),("faulty_node",1)]
 
-# Running PBFT protocol
-run_PBFT(nodes=nodes,checkpoint_frequency0=checkpoint_frequency,clients_ports0=clients_ports,timer_limit_before_view_change0=timer_limit_before_view_change)
+# Running APBFT protocol
+run_APBFT(nodes=nodes,proportion=p,checkpoint_frequency0=checkpoint_frequency,clients_ports0=clients_ports,timer_limit_before_view_change0=timer_limit_before_view_change)
 
-time.sleep(0.2) # Waiting for the network to start...
+time.sleep(1) # Waiting for the network to start...
 
 # Run clients:
-
-requests_number = 2 # The user chooses the number of requests he wants to execute simultaneously (They are all sent to the PBFT network at the same time) - Here each request will be sent by a different client
+requests_number = 20 # The user chooses the number of requests he wants to execute simultaneously (They are all sent to the PBFT network at the same time) - Here each request will be sent by a different client
 clients_list = []
 for i in range (requests_number):
     globals()["C%s" % str(i)]=Client(i,waiting_time_before_resending_request)

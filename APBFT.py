@@ -19,7 +19,10 @@ checkpoint_vote_format_file = "checkpoint_vote_format.json"
 view_change_format_file = "view_change_format.json"
 new_view_format_file = "new_view_format.json"
 
-def run_PBFT(nodes,checkpoint_frequency0,clients_ports0,timer_limit_before_view_change0): # All the nodes participate in the consensus
+def run_APBFT(nodes,proportion,checkpoint_frequency0,clients_ports0,timer_limit_before_view_change0): # All the nodes participate in the consensus
+
+    global p
+    p = proportion
 
     global number_of_messages
     number_of_messages = {} # This dictionary will store for each request the number of exchanged messages from preprepare to reply: number_of_messages={"request":number_of_exchanged_messages,...}
@@ -103,7 +106,16 @@ def run_nodes(nodes):
     global j
     global n
     global f
-    # Starting all consensus nodes:
+    
+    total_initial_nodes = 0
+    for node_type in nodes[0]:
+        total_initial_nodes = total_initial_nodes + node_type[1]
+    proportion_initial_nodes = int(total_initial_nodes*p) # number of nodes to start at the beginning
+    #print (proportion_initial_nodes)
+
+    initial_nodes = 0 # This is the number of initial nodes, we only take a proportion and add the others to the new nodes set
+    
+    # Starting nodes:
     last_waiting_time = 0
     for waiting_time in nodes:
         for tuple in nodes[waiting_time]:
@@ -129,8 +141,9 @@ def run_nodes(nodes):
                 processed_messages.append(0)
                 messages_processing_rate.append(0) # Initiated with 0
                 scores.append(0)
-                if waiting_time == 0:
+                if waiting_time == 0 and initial_nodes<proportion_initial_nodes:
                     consensus_nodes.append(j)
+                    initial_nodes = initial_nodes + 1
                     n = n + 1
                     f = (n - 1) // 3
                 else:
@@ -144,7 +157,7 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
     global consensus_nodes
     global new_nodes
     min_nodes=4
-    max_nodes=len(the_nodes_ids_list)//2
+    max_nodes=int(len(the_nodes_ids_list)*p)
     remaining_nodes_scores = []
     for i in range (len(scores)):
         remaining_nodes_scores.append(scores[i])
@@ -157,7 +170,8 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
             for j in range (len(scores)):
                 if scores[j] == max_score and len(consensus_nodes)<min_nodes:
                     consensus_nodes.append(j)
-                    remaining_nodes_scores.remove(max_score)
+                    if (max_score in remaining_nodes_scores):
+                        remaining_nodes_scores.remove(max_score)
   
     if (min_nodes<max_nodes):
         for i in range (min_nodes,max_nodes):
@@ -197,8 +211,24 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
     print("slow_nodes:",slow_nodes)
     print("malicious_nodes:",malicious_nodes)
 '''
- 
+global processed_requests # This is the total number of requests processed by the network
+processed_requests = 0
+global first_reply_time
+
 def reply_received(request,reply): # This method tells the nodes that the client received its reply so that they can know the accepted reply
+
+    global processed_requests
+    processed_requests = processed_requests + 1
+
+    if processed_requests == 1:
+        global first_reply_time
+        first_reply_time = time.time()
+
+    last_reply_time = time.time()
+
+    if processed_requests == 20: # We want to stop counting at 100 for example
+        print("Network validated %d requests within %f seconds" % (processed_requests,last_reply_time-first_reply_time))
+
     global scores
     replied_requests[request] = 1
     accepted_replies[request] = reply
