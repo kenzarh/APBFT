@@ -899,6 +899,7 @@ class Node():
         reply_message["view_number"]=self.view_number
         reply_message["client_id"]=client_id
         reply_message["node_id"]=self.node_id
+        reply_message["timestamp"]=commit_message["timestamp"]
         reply = "Request executed"
         reply_message["result"]=reply
         reply_message["sequence_number"]=commit_message["sequence_number"]
@@ -1037,6 +1038,7 @@ class FaultyRepliesNode(Node): # This node sends a fauly reply to the client
         reply_message["view_number"]=self.view_number
         reply_message["client_id"]=client_id
         reply_message["node_id"]=self.node_id
+        reply_message["timestamp"]=commit_message["timestamp"]
         reply = "Faulty reply"
         reply_message["result"]=reply
         reply_message["sequence_number"]=commit_message["sequence_number"]
