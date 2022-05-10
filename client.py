@@ -3,13 +3,26 @@ import json
 import datetime
 import time
 from APBFT import *
+from nacl.signing import SigningKey
+from nacl.signing import VerifyKey
 
-nodes_ports = [(30000 + i) for i in range (0,2000)]
+ports_file = "ports.json"
+with open(ports_file):
+    ports_format= open(ports_file)
+    ports = json.load(ports_format)
+    ports_format.close()
 
-clients_ports = [(10000 + i) for i in range (0,1000)]
+clients_starting_port = ports["clients_starting_port"]
+clients_max_number = ports["clients_max_number"]
+
+nodes_starting_port = ports["nodes_starting_port"]
+nodes_max_number = ports["nodes_max_number"]
+
+nodes_ports = [(nodes_starting_port + i) for i in range (0,nodes_max_number)]
+clients_ports = [(clients_starting_port + i) for i in range (0,clients_max_number)]
 
 global request_format_file
-request_format_file = "request_format.json"
+request_format_file = "messages_formats/request_format.json"
 
 class Client: # Client's communication is synchronous: It can not send a request until its last request is answered.
 
@@ -31,7 +44,7 @@ class Client: # Client's communication is synchronous: It can not send a request
             sending_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             host = socket.gethostname() 
             sending_socket.connect((host, node_port))
-            sending_socket.send(str(request_message).encode())
+            sending_socket.send(request_message)
 
         # Waiting for answers
         answered_nodes = [] # list of nodes ids that answered the request
@@ -48,7 +61,13 @@ class Client: # Client's communication is synchronous: It can not send a request
                     break
                 else:
                     break
-            received_message = c.recv(2048).decode()
+            received_message = c.recv(2048)
+        
+            [received_message,public_key] = received_message.split(b'split')
+  
+            # Create a VerifyKey object from a hex serialized public key
+            verify_key = VerifyKey(public_key)
+            received_message  = verify_key.verify(received_message).decode()
             received_message = received_message.replace("\'", "\"")
             received_message = json.loads(received_message)
             #print("Client %d received message: %s" % (self.client_id , received_message))
@@ -68,7 +87,7 @@ class Client: # Client's communication is synchronous: It can not send a request
                 if (replies[str_response]>similar_replies):
                     similar_replies = similar_replies +1
                     if similar_replies == (f+1):
-                       
+                    
                         receiving_time=time.time()
                         duration = receiving_time-sending_time
                         number_of_messages = reply_received(received_message["request"],received_message["result"])
@@ -85,23 +104,40 @@ class Client: # Client's communication is synchronous: It can not send a request
         request_message["timestamp"] = now
         request_message["request"] = request
         request_message["client_id"] = self.client_id
+
+        # Generate a new random signing key
+        signing_key = SigningKey.generate()
+
+        # Sign the message with the signing key
+        signed_request = signing_key.sign(str(request_message).encode())
+
+        # Obtain the verify key for a given signing key
+        verify_key = signing_key.verify_key
+
+        # Serialize the verify key to send it to a third party
+        public_key = verify_key.encode()
+
+        request_message = signed_request +(b'split')+  public_key
+
         # The client sends the request to what it believes is the primary node:
         sending_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         host = socket.gethostname() 
         sending_socket.connect((host, primary_node_port))
-        sending_socket.send(str(request_message).encode())
+        sending_socket.send(request_message)
         if (request not in self.sent_requests_without_answer):
             self.sent_requests_without_answer.append(request)
         sending_time = time.time() # This is the time when the client's request was sent to the network
         answered_nodes = [] # list of nodes ids that answered the request
         similar_replies = 0 # Initiate the number of similar replies to 0 then takes the max ...
         replies={} # A dictionary of replies, keys have the form:[timestamp,result] and the values are the number of time this reply was received
+        nodes_replies={} # A dictionary that stores, for each node, the reply it gave for the current request
         s = self.socket
         accepted_reply="" # The accepted result for the current 
 
         while True:
             try: 
-                c, addr = s.accept()
+                s=self.socket
+                sender_socket = s.accept()[0]
             except socket.timeout:
                 if len(self.sent_requests_without_answer)!=0:
                     print("No received reply")
@@ -110,7 +146,17 @@ class Client: # Client's communication is synchronous: It can not send a request
                     break
                 else:
                     continue
-            received_message = c.recv(2048).decode()
+            received_message = sender_socket.recv(2048)
+            
+            #print("Node %d got message: %s" % (self.node_id , received_message))
+            sender_socket.close()
+        
+            [received_message , public_key] = received_message.split(b'split')
+  
+            # Create a VerifyKey object from a hex serialized public key
+            verify_key = VerifyKey(public_key)
+            
+            received_message  = verify_key.verify(received_message).decode()
             received_message = received_message.replace("\'", "\"")
             received_message = json.loads(received_message)
             #print("Client %d received message: %s" % (self.client_id , received_message))
@@ -120,8 +166,9 @@ class Client: # Client's communication is synchronous: It can not send a request
             response = [request_timestamp,result]
             str_response = str(response)
             # TO DO : S'assurer de la signature du message
-            if (answering_node_id not in answered_nodes): # Ne rien faire si le noeud a déjà répondu
+            if (answering_node_id not in answered_nodes): # Ne rien faire si le noeud a déjà répondu    
                 answered_nodes.append(answering_node_id)
+                nodes_replies[answering_node_id] = str_response
                 # Increment the number of received replies:
                 if str_response not in replies:
                     replies[str_response] = 1
@@ -129,15 +176,26 @@ class Client: # Client's communication is synchronous: It can not send a request
                     replies[str_response] = replies[str_response] +1
                 if (replies[str_response]>similar_replies):
                     similar_replies = similar_replies +1
-                    if similar_replies == (f+1):
+                if similar_replies == (f+1):
                         accepted_reply = result
+                        accepted_response = str_response
                         receiving_time=time.time()
                         duration = receiving_time-sending_time
                         number_of_messages = reply_received(received_message["request"],received_message["result"])
                         print("Client %d got reply within %f seconds. The network exchanged %d messages" % (self.client_id,duration,number_of_messages))
                         self.sent_requests_without_answer.remove(received_message["request"])
-                        #s.close()
-                        #sys.exit()
-                    elif similar_replies > (f+1) and received_message["result"]==accepted_reply:
-                        another_received_reply(request,answering_node_id)
-                        #print(received_message)
+
+                        # Punish nodes that sent a bad reply to the client:
+                        for node_id in nodes_replies:
+                            if nodes_replies[node_id]!=accepted_response:
+                                false_response(node_id)
+                                print("1 : Fault reply from node %d" % node_id)
+                                
+                elif similar_replies > (f+1):
+
+                    if (received_message["result"]==accepted_reply):
+                            another_received_reply(request,answering_node_id)
+
+                    else: # received_message["result"]!=accepted_reply
+                            false_response(answering_node_id) # Report that the node sent a bad reply to the client
+                            #print("Fault reply from node %d" % answering_node_id)
