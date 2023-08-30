@@ -36,7 +36,7 @@ run_APBFT(nodes=nodes,proportion=p,checkpoint_frequency0=checkpoint_frequency,cl
 time.sleep(1) # Waiting for the network to start...
 
 # Run clients:
-requests_number = 2  # The user chooses the number of requests he wants to execute simultaneously (They are all sent to the PBFT network at the same time) - Here each request will be sent by a different client
+requests_number = 1  # The user chooses the number of requests he wants to execute simultaneously (They are all sent to the PBFT network at the same time) - Here each request will be sent by a different client
 clients_list = []
 for i in range (requests_number):
     globals()["C%s" % str(i)]=Client(i,waiting_time_before_resending_request)
