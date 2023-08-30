@@ -147,6 +147,10 @@ def run_nodes(nodes):
                     node=FaultyNode(node_id=j)
                 elif (node_type=="faulty_replies_node"):
                     node=FaultyRepliesNode(node_id=j)
+                elif (node_type=="byzantine_node"):
+                    node=ByzantineNode(node_id=j)
+                elif (node_type=="dos_attacker"):
+                    node=DoSAttacker(node_id=j)
                 threading.Thread(target=node.receive,args=()).start()
                 nodes_list.append(node)
                 the_nodes_ids_list.append(j)
@@ -156,18 +160,21 @@ def run_nodes(nodes):
                 processed_messages.append(0)
                 messages_processing_rate.append(0) # Initiated with 0
                 scores.append(0)
-                if waiting_time == 0 and (initial_nodes<proportion_initial_nodes  or initial_nodes<4):
+                #if waiting_time == 0 and (initial_nodes<proportion_initial_nodes  or initial_nodes<4):
+                if waiting_time == 0:
                     consensus_nodes.append(j)
                     initial_nodes = initial_nodes + 1
                     n = n + 1
                     f = (n - 1) // 3
                 else:
                     new_nodes.append(j)
-                #print("%s node %d started" %(node_type,j))
+                print(j,node_type)
                 j=j+1
+    print("Consensus nodes:" , consensus_nodes)
 
 # Update consensus nodes
 def update_consensus_nodes():    # We only keep nodes with the highest scores, with a number of nodes between min_nodes and max_nodes.
+    update_start = time.time()
     global consensus_nodes
     global new_nodes
     min_nodes=4
@@ -187,12 +194,12 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
                     if (max_score in remaining_nodes_scores):
                         remaining_nodes_scores.remove(max_score)
 
-    while (min_nodes<max_nodes and len(remaining_nodes_scores) > 0 and max(remaining_nodes_scores)>=0):
-        for i in range (min_nodes,max_nodes):
+    #while (min_nodes<max_nodes and len(remaining_nodes_scores) > 0 and max(remaining_nodes_scores)>=0):
+    for i in range (min_nodes,max_nodes):
             if len(remaining_nodes_scores) > 0 and max(remaining_nodes_scores)>=0:
                 max_score =  max(remaining_nodes_scores)            
                 for j in range (len(scores)):
-                    if scores[j] == max_score and len(consensus_nodes)<max_nodes:
+                    if scores[j] == max_score and len(consensus_nodes)<max_nodes and (j not in consensus_nodes):
                         consensus_nodes.append(j)
                         if (max_score in remaining_nodes_scores):
                             remaining_nodes_scores.remove(max_score)
@@ -223,14 +230,18 @@ def update_consensus_nodes():    # We only keep nodes with the highest scores, w
     global n
     n = len(consensus_nodes)
     global f
-    f = (len(consensus_nodes) - 1) // 3
+    f = (n - 1) // 3
+
+    update_end = time.time()
+    print("Consensus nodes updating duration: ", update_end-update_start)
+   
 
 global processed_requests # This is the total number of requests processed by the network
 processed_requests = 0
 global first_reply_time
 
 def reply_received(request,reply): # This method tells the nodes that the client received its reply so that they can know the accepted reply
-
+  
     global processed_requests
     processed_requests = processed_requests + 1
 
@@ -240,8 +251,8 @@ def reply_received(request,reply): # This method tells the nodes that the client
 
     last_reply_time = time.time()
 
-    if processed_requests%5 == 0 : # We want to stop counting at 100 for example
-        print("Network validated %d requests within %f seconds" % (processed_requests,last_reply_time-first_reply_time))
+    #if processed_requests%5 == 0 : # We want to stop counting at 100 for example
+    #    print("Network validated %d requests within %f seconds" % (processed_requests,last_reply_time-first_reply_time))
 
     global scores
     replied_requests[request] = 1
@@ -258,7 +269,15 @@ def reply_received(request,reply): # This method tells the nodes that the client
             malicious_nodes.append(i)
             if i in consensus_nodes:
                 consensus_nodes.remove(i)
+    #threading.Thread(target=update_consensus_nodes,args=()).start()
+
+#################################################
+    #time.sleep(10)
     update_consensus_nodes()
+    print("Consensus nodes updated:",consensus_nodes)
+#####################################################
+
+    #update_consensus_nodes()
     return number_of_messages[request]
 
 def another_received_reply(request,answering_node_id):
@@ -275,6 +294,8 @@ def another_received_reply(request,answering_node_id):
         malicious_nodes.append(i)
         if i in consensus_nodes:
             consensus_nodes.remove(i)
+    #threading.Thread(target=update_consensus_nodes,args=()).start()
+    #update_consensus_nodes()
 
 def false_response(answering_node_id):  # Decrement the credibility of the node that sends a bad reply to the client
     credibility[answering_node_id] -= 1
@@ -290,6 +311,7 @@ def get_f():
     return f
 
 class Node():
+ 
     def __init__(self,node_id):
         self.node_id = node_id
         self.node_port = nodes_ports[node_id]
@@ -321,6 +343,7 @@ class Node():
         self.asked_view_change = [] # view numbers the node asked for
 
     def process_received_message(self,received_message,waiting_time):
+            
             global total_processed_messages
             message_type = received_message["message_type"]
             if (message_type=="REQUEST"):
@@ -333,7 +356,9 @@ class Node():
                 timestamp = received_message["timestamp"]
                 client_id = received_message["client_id"]
                 if (client_id not in self.last_reply_timestamp or timestamp > self.last_reply_timestamp[client_id]): # The request is only processed if its timestamp is greater than teh timestamp of the last request that the node responded to
+                    #print(self.node_id,received_message,self.primary_node_id)
                     if (self.node_id==self.primary_node_id):
+                        
                         client_id = received_message["client_id"]
                         actual_timestamp = received_message["timestamp"]
                         if (client_id in requests):
@@ -348,6 +373,7 @@ class Node():
                         self.send(destination_node_id=self.primary_node_id,message=received_message)
             elif (message_type=="PREPREPARE"):
                 node_id = received_message["node_id"]
+                #print(self.node_id,received_message,self.primary_node_id)
                 request = received_message["request"]
                 digest = hashlib.sha256(request.encode()).hexdigest()
                 requests_digest = received_message["request_digest"]
@@ -365,22 +391,27 @@ class Node():
                 requests_digest = received_message["request_digest"]
                 view = received_message["view_number"]
                 tuple = (view,received_message["sequence_number"])
-
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
                     credibility[node_id] -= 1
-
+                #print(node_id,received_message,(digest==requests_digest))
                 # Making sure the digest's request is good + the view number in the message is similar to the view number of the node + We did not broadcast a message with the same view number and sequence number
                 if ((digest==requests_digest) and (view==self.view_number)): 
                     if request not in self.accepted_requests_time:
                         self.accepted_requests_time[request] = time.time() # Start timer
                     if tuple not in self.preprepares:
                         self.message_log.append(received_message)
-                        self.preprepares[tuple]=digest 
+                        self.preprepares[tuple]=digest
+                        #try: 
                         self.broadcast_prepare_message(preprepare_message=received_message,nodes_ids_list=consensus_nodes)
-                       
+                        #print("Message sent: ",received_message)
+                        #except:
+                        #print("Error in sending message by node: ",node_id,received_message)
+                      
             elif (message_type=="PREPARE"):
+                
                 total_processed_messages += 1
                 node_id = received_message["node_id"]
+                #print("A prepare message from node ", node_id)
                 processed_messages[node_id] += 1
                 messages_processing_rate[node_id]=processed_messages[node_id]/total_processed_messages
                 request = received_message["request"]
@@ -388,6 +419,7 @@ class Node():
                 requests_digest = received_message["request_digest"]
                 if digest != requests_digest: # Means the node that sent the message changed the request => its credibility is decremented
                     credibility[node_id] -= 1
+            
                 number_of_messages[received_message["request"]] = number_of_messages[received_message["request"]] + 1
                 timestamp = received_message["timestamp"]
                 client_id = received_message["client_id"]
@@ -415,7 +447,7 @@ class Node():
                     self.broadcast_commit_message(prepare_message=received_message,nodes_ids_list=consensus_nodes,sequence_number=the_sequence_number)
 
             elif (message_type=="COMMIT"):
-
+                #print("commit")
                 total_processed_messages += 1
                 node_id = received_message["node_id"]
                 processed_messages[node_id] += 1
@@ -445,6 +477,7 @@ class Node():
                     else:
                         self.commits[tuple]=self.commits[tuple]+1
                     i= 0
+                
                     if (self.commits[tuple]==(2*f+1) and (tuple in self.prepares)):
                         if client_id not in self.last_reply_timestamp:
                             i=1
@@ -454,6 +487,7 @@ class Node():
                     
                         if i ==1:
                             time.sleep(waiting_time)
+                            #print(self.node_id,"sleep",waiting_time)
                             reply = self.send_reply_message_to_client (received_message)
                             if request in self.accepted_requests_time:
                                 request_accepting_time = self.accepted_requests_time[request]
@@ -551,149 +585,158 @@ class Node():
                                 break
                 lock.release()
 
-            elif (message_type=="VIEW-CHANGE"):
-                new_asked_view = received_message["new_view"]
-                node_requester = received_message["node_id"]
-                if (new_asked_view % len(consensus_nodes) == self.node_id): # If the actual node is the primary node for the next view
-                    if new_asked_view not in self.received_view_changes:
-                        self.received_view_changes[new_asked_view]=[received_message]
-                    else:
-                        requested_nodes = [] # Nodes that requested changing the view
-                        for request in self.received_view_changes[new_asked_view]:
-                            requested_nodes.append(request["node_id"])
-                        if node_requester not in requested_nodes:
-                            self.received_view_changes[new_asked_view].append(received_message)
-                    if len(self.received_view_changes[new_asked_view])==2*f:
-
-                        #The primary sends a view-change message for this view if it didn't do it before
-                        if new_asked_view not in self.asked_view_change:
-                            view_change_message = self.broadcast_view_change()
-                            self.received_view_changes[new_asked_view].append(view_change_message)
-                      
-                        # Broadcast a new view message:
-                        with open(new_view_format_file):
-                            new_view_format= open(new_view_format_file)
-                            new_view_message = json.load(new_view_format)
-                            new_view_format.close()
-                        new_view_message["new_view_number"]=new_asked_view
-
-                        V=self.received_view_changes[new_asked_view]
-                        new_view_message["V"]=V
-
-                        # Creating the "O" set of the new view message:
-                        # Initializing min_s and max_s:
-                        min_s=0
-                        max_s=0
-                        if (len(V)>0):
-                            sequence_numbers_in_V=[view_change_message["last_sequence_number"] for view_change_message in V]
-                            min_s=min(sequence_numbers_in_V) # min sequence number of the latest stable checkpoint in V
-                        sequence_numbers_in_prepare_messages=[message["sequence_number"] for message in self.message_log if message["message_type"]=="PREPARE"]
-                        if len(sequence_numbers_in_prepare_messages)!=0:
-                            max_s=max(sequence_numbers_in_prepare_messages)
-
-                        O = []
+            if (message_type=="VIEW-CHANGE"):
+                    new_asked_view = received_message["new_view"]
+                    node_requester = received_message["node_id"]
+                    if (new_asked_view % len(consensus_nodes) == self.node_id): # If the actual node is the primary node for the next view
                         
-                        if (max_s>min_s):
+                        if new_asked_view not in self.received_view_changes:
+                            self.received_view_changes[new_asked_view]=[received_message]
+                        else:
+                            requested_nodes = [] # Nodes that requested changing the view
+                            for request in self.received_view_changes[new_asked_view]:
+                                requested_nodes.append(request["node_id"])
+                            if node_requester not in requested_nodes:
+                                self.received_view_changes[new_asked_view].append(received_message)
+                        if len(self.received_view_changes[new_asked_view])==2*f:
 
-                            # Creating a preprepare-view message for new_asked_view for each sequence number between max_s and min_s
-                            for s in range (min_s,max_s):
-                                with open(preprepare_format_file):
-                                    preprepare_format= open(preprepare_format_file)
-                                    preprepare_message = json.load(preprepare_format)
-                                    preprepare_format.close()
-                                preprepare_message["view_number"]=new_asked_view
-                                preprepare_message["sequence_number"]=s
+                            #The primary sends a view-change message for this view if it didn't do it before
+                            if new_asked_view not in self.asked_view_change:
+                                view_change_message = self.broadcast_view_change()
+                                self.received_view_changes[new_asked_view].append(view_change_message)
+                        
+                            # Broadcast a new view message:
+                            with open(new_view_format_file):
+                                new_view_format= open(new_view_format_file)
+                                new_view_message = json.load(new_view_format)
+                                new_view_format.close()
+                            new_view_message["new_view_number"]=new_asked_view
 
-                                i=0 # There is no set Pm in P with sequence number s - In our code: there is no prepared message in P where sequence number = s (case 2 in the paper) => It turns i=1 if we find such a set
-                                P = received_message["P"]
-                                v=0 # Initiate the view number so that we can find the highest one in P
-                                for message in P:
-                                    if (message["sequence_number"])==s:
-                                        i=1
-                                        if (message["view_number"]>v):
-                                            v = message["view_number"]
-                                            d=message["request_digest"]
-                                            r=message["request"]
-                                            t=message["timestamp"]
-                                            c=message["client_id"]
+                            V=self.received_view_changes[new_asked_view]
+                            new_view_message["V"]=V
 
-                                            preprepare_message["request"]=r
-                                            preprepare_message["timestamp"]=t
-                                            preprepare_message["client_id"]=c
+                            # Creating the "O" set of the new view message:
+                            # Initializing min_s and max_s:
+                            min_s=0
+                            max_s=0
+                            
+                            if (len(V)>0):
+                                sequence_numbers_in_V=[view_change_message["last_sequence_number"] for view_change_message in V]
+                                min_s=min(sequence_numbers_in_V) # min sequence number of the latest stable checkpoint in V
+                            sequence_numbers_in_prepare_messages=[message["sequence_number"] for message in self.message_log if message["message_type"]=="PREPARE"]
+                          
+                            if len(sequence_numbers_in_prepare_messages)!=0:
+                                max_s=max(sequence_numbers_in_prepare_messages)
 
-                                    # Restart timers:
-                                    for request in self.accepted_requests_time:
-                                                self.accepted_requests_time[request]=time.time()
+                            O = []
+                            
+                            if (max_s>min_s):
+                                # Creating a preprepare-view message for new_asked_view for each sequence number between max_s and min_s
+                                for s in range (min_s,max_s):
+                                    with open(preprepare_format_file):
+                                        preprepare_format= open(preprepare_format_file)
+                                        preprepare_message = json.load(preprepare_format)
+                                        preprepare_format.close()
+                                    preprepare_message["view_number"]=new_asked_view
+                                    preprepare_message["sequence_number"]=s
+
+                                    i=0 # There is no set Pm in P with sequence number s - In our code: there is no prepared message in P where sequence number = s (case 2 in the paper) => It turns i=1 if we find such a set
+                                    P = received_message["P"]
+                                    v=0 # Initiate the view number so that we can find the highest one in P
+                                    for message in P:
+                                        if (message["sequence_number"])==s:
+                                            i=1
+                                            if (message["view_number"]>v):
+                                                v = message["view_number"]
+                                                d=message["request_digest"]
+                                                r=message["request"]
+                                                t=message["timestamp"]
+                                                c=message["client_id"]
+
+                                                preprepare_message["request"]=r
+                                                preprepare_message["timestamp"]=t
+                                                preprepare_message["client_id"]=c
+
+                                        # Restart timers:
+                                        for request in self.accepted_requests_time:
+                                                    self.accepted_requests_time[request]=time.time()
+                                                    
+                                        if (i==0): # Case 2
+                                                    preprepare_message["request_digest"]="null"
+                                                    O.append(preprepare_message)
+                                                    self.message_log.append(preprepare_message)
                                                 
-                                    if (i==0): # Case 2
-                                                preprepare_message["request_digest"]="null"
-                                                O.append(preprepare_message)
-                                                self.message_log.append(preprepare_message)
-                                            
-                                    else: # Case 1
-                                                preprepare_message["request_digest"]=d
-                                                O.append(preprepare_message)
-                                                self.message_log.append(preprepare_message)
+                                        else: # Case 1
+                                                    preprepare_message["request_digest"]=d
+                                                    O.append(preprepare_message)
+                                                    self.message_log.append(preprepare_message)
 
-                        new_view_message["O"]=O
+                            new_view_message["O"]=O
+                            new_view_message["node_id"]=self.node_id
 
-                        if (min_s>=self.stable_checkpoint["sequence_number"]):
-                            # The primary node enters the new view
-                            self.view_number=new_asked_view
+                            if (min_s>=self.stable_checkpoint["sequence_number"]):
+                                # The primary node enters the new view
+                                self.view_number=new_asked_view
+                                #print("new_view_message:",new_view_message)
+                                self.broadcast_new_view_message(new_view_message,consensus_nodes)
+                                print("New view!")
+       
+            if (message_type=="NEW-VIEW"):
+                    #print(received_message)
+                    self.primary_node_id=received_message["node_id"]
+                    #print(received_message["node_id"])
+                    #self.primary_node_id=self.primary_node_id+1
 
-                            # Decrement the credibility of the previous primary node
-                            credibility[self.primary_node_id] -= 1
+                    # TO DO : Verify the set O in the new view message
 
-                            # Change primary node (locally first then broadcast view change)
-                            self.primary_node_id=self.node_id
-
-                            self.broadcast_message(consensus_nodes,new_view_message)
-                            print("New view!")
-
-                            # The view is changed. Now we add the node from the slow node set with the maximum score to the consensus set
-                            max_slow_score = max(slow_nodes_scores)
-                            for i in range(len(scores)):
-                                if (scores[i]==max_slow_score):
-                                    consensus_nodes.append(i)
-                                    break
-                            consensus_nodes.sort()
-                           
-            elif (message_type=="NEW-VIEW"):
-                # TO DO : Verify the set O in the new view message
-
-                # Restart timers:
-                for request in self.accepted_requests_time:
-                    self.accepted_requests_time[request]=time.time()
-      
-                O = received_message["O"]
-                # Broadcast a prepare message for each preprepare message in O
-                if len(O)!=0:
-                    for message in O:
-                        if (received_message["request_digest"]!="null"):
-                            self.message_log.append(message)
-                            prepare_message=self.broadcast_prepare_message(message,consensus_nodes)
-                            self.message_log.append(prepare_message)                
-                self.view_number = received_message["new_view_number"]
-                self.primary_node_id=received_message["new_view_number"]%n
-                self.asked_view_change.clear()
+                    # Restart timers:
+                    for request in self.accepted_requests_time:
+                        self.accepted_requests_time[request]=time.time()
+        
+                    O = received_message["O"]
+            
+                    # Broadcast a prepare message for each preprepare message in O
+                    if len(O)!=0:
+                        for message in O:
+                            if (received_message["request_digest"]!="null"):
+                                self.message_log.append(message)
+                                prepare_message=self.broadcast_prepare_message(message,consensus_nodes)
+                                self.message_log.append(prepare_message)                
+                    self.view_number = received_message["new_view_number"]
+                    self.primary_node_id=received_message["new_view_number"] % n
+                    self.asked_view_change.clear()
     
     def receive(self,waiting_time): # The waiting_time parameter is for nodes we want to be slow, they will wait for a few seconds before processing a message =0 by default
         while True:
             s = self.socket
             c,_ = s.accept()
             received_message = c.recv(2048)
+
+            received_message_size = len(received_message)
+            
             #print("Node %d got message: %s" % (self.node_id , received_message))
-            [received_message,public_key] = received_message.split(b'split')
+            try:
+                [received_message,public_key] = received_message.split(b'split')
+            except:
+                pass
+                #print("1. Erreur: Node %d got message: %s" % (self.node_id , received_message))
 
             # Create a VerifyKey object from a hex serialized public key    
-            verify_key = VerifyKey(public_key)   
-            received_message  = verify_key.verify(received_message).decode()
-            received_message = received_message.replace("\'", "\"")
-            received_message = json.loads(received_message)
-            threading.Thread(target=self.check,args=(received_message,waiting_time,)).start()
+            try:
+                verify_key = VerifyKey(public_key)   
+                received_message  = verify_key.verify(received_message).decode()
+                received_message = received_message.replace("\'", "\"")
+                received_message = json.loads(received_message)
+                #print(received_message)
+                threading.Thread(target=self.check,args=(received_message,waiting_time,received_message_size,)).start()
+            except:
+                pass
+                #print("2. Problem in message: ", received_message)
 
-    def check (self,received_message,waiting_time):
+    def check (self,received_message,waiting_time,received_message_size):
+            #print(received_message)
             # Start view change if one of the timers has reached the limit:
+            #print("Node %d got message: %s" % (self.node_id , received_message))
             i = 0 # Means no timer reached the limit , i = 1 means one of the timers reached their limit
             if len(self.accepted_requests_time)!=0 and len(self.asked_view_change)==0: # Check if the dictionary is not empty
                 for request in self.accepted_requests_time:
@@ -704,6 +747,8 @@ class Node():
                             i = 1 # One of the timers reached their limit
                             new_view = self.view_number+1
                             break
+
+            
             if i==1 and new_view not in self.asked_view_change:
                 # Broadcast a view change:
                 threading.Thread(target=self.broadcast_view_change,args=()).start()
@@ -712,6 +757,11 @@ class Node():
                     if self.accepted_requests_time[request] != -1:
                         self.accepted_requests_time[request]=time.time()
             message_type = received_message["message_type"]
+
+            #if(message_type=="NEW-VIEW"):
+                #print(received_message)
+
+
             if i == 1 or len(self.asked_view_change)!= 0: # Only accept checkpoints, view changes and new-view messages
                     if message_type in ["CHECKPOINT","VOTE","VIEW-CHANGE","NEW-VIEW"]:
                             threading.Thread(target=self.process_received_message,args=(received_message,waiting_time,)).start()
@@ -752,6 +802,26 @@ class Node():
         for destination_node_id in nodes_ids_list:
                 self.send(destination_node_id,message)
 
+    def broadcast_new_view_message(self,new_view_message,nodes_ids_list): # The primary node prepares and broadcats a PREPREPARE message
+     
+            # Generate a new random signing key
+            signing_key = SigningKey.generate()
+
+            # Sign the message with the signing key
+            signed_new_view = signing_key.sign(str(new_view_message).encode())
+
+            # Obtain the verify key for a given signing key
+            verify_key = signing_key.verify_key
+
+            # Serialize the verify key to send it to a third party
+            public_key = verify_key.encode()
+
+            new_view_message = signed_new_view +(b'split')+  public_key
+
+            self.broadcast_message(nodes_ids_list,new_view_message)
+
+
+
     def broadcast_preprepare_message(self,request_message,nodes_ids_list): # The primary node prepares and broadcats a PREPREPARE message
         if (replied_requests[request_message["request"]]==0):
             with open(preprepare_format_file):
@@ -761,6 +831,8 @@ class Node():
             preprepare_message["view_number"]=self.view_number
             global sequence_number
             preprepare_message["sequence_number"]=sequence_number
+            preprepare_message["node_id"]=self.node_id
+          
             preprepare_message["timestamp"]=request_message["timestamp"]
             tuple = (self.view_number,sequence_number)
             sequence_number = sequence_number + 1 # Increment the sequence number after each request 
@@ -884,7 +956,10 @@ class Node():
 
         view_change_message = signed_view_change +(b'split')+  public_key
 
+        #print("View change message:",view_change_message)
+
         self.broadcast_message(the_nodes_ids_list,view_change_message)
+    
 
         return view_change_message
 
@@ -936,7 +1011,7 @@ class HonestNode(Node):
         Node.receive(self,waiting_time)
 
 class SlowNode(Node):
-    def receive(self,waiting_time=1):
+    def receive(self,waiting_time=0.1):
         Node.receive(self,waiting_time)
 
 class NonRespondingNode(Node):
@@ -944,7 +1019,7 @@ class NonRespondingNode(Node):
         while True:
             s=self.socket
             sender_socket = s.accept()[0]
-            received_message = sender_socket.recv(2048).decode()
+            #received_message = sender_socket.recv(2048).decode()
             #print("Node %d got message: %s" % (self.node_id , received_message))
             sender_socket.close()
             # receives messages but doesn't do anything
@@ -952,42 +1027,45 @@ class NonRespondingNode(Node):
 class FaultyPrimary(Node): # This node changes the client's request digest while sending a preprepare message
     def receive(self,waiting_time=0):
         Node.receive(self,waiting_time)
+
+
     def broadcast_preprepare_message(self,request_message,nodes_ids_list): # The primary node prepares and broadcats a PREPREPARE message
-        with open(preprepare_format_file):
-            preprepare_format= open(preprepare_format_file)
-            preprepare_message = json.load(preprepare_format)
-            preprepare_format.close()
-        preprepare_message["view_number"]=self.view_number
-        global sequence_number
-        preprepare_message["sequence_number"]=sequence_number
-        preprepare_message["timestamp"]=request_message["timestamp"]
-        tuple = (self.view_number,sequence_number)
-        sequence_number = sequence_number + 1 # Increment the sequence number after each request 
-        #Calculating the request's digest using SHA256
-        request = request_message["request"]+"abc"
-        digest = hashlib.sha256(request.encode()).hexdigest()
-        preprepare_message["request_digest"]=digest
-        preprepare_message["request"]=request_message["request"]
-        preprepare_message["client_id"]=request_message["client_id"]
-        preprepare_message["node_id"]=self.node_id
-        self.preprepares[tuple]=digest
-        self.message_log.append(preprepare_message)
+        if (replied_requests[request_message["request"]]==0):
+            with open(preprepare_format_file):
+                preprepare_format= open(preprepare_format_file)
+                preprepare_message = json.load(preprepare_format)
+                preprepare_format.close()
+            preprepare_message["view_number"]=self.view_number
+            global sequence_number
+            preprepare_message["sequence_number"]=sequence_number
+            preprepare_message["timestamp"]=request_message["timestamp"]
+            tuple = (self.view_number,sequence_number)
+            sequence_number = sequence_number + 1 # Increment the sequence number after each request 
+            #Calculating the request's digest using SHA256
+            request = request_message["request"]+"abc"
+            digest = hashlib.sha256(request.encode()).hexdigest()
+            preprepare_message["request_digest"]=digest
+            preprepare_message["request"]=request_message["request"]
+            preprepare_message["client_id"]=request_message["client_id"]
+            self.preprepares[tuple]=digest
+            self.message_log.append(preprepare_message)
 
-        # Generate a new random signing key
-        signing_key = SigningKey.generate()
+            # Generate a new random signing key
+            signing_key = SigningKey.generate()
 
-        # Sign the message with the signing key
-        signed_preprepare = signing_key.sign(str(preprepare_message).encode())
+            # Sign the message with the signing key
+            signed_preprepare = signing_key.sign(str(preprepare_message).encode())
 
-        # Obtain the verify key for a given signing key
-        verify_key = signing_key.verify_key
+            # Obtain the verify key for a given signing key
+            verify_key = signing_key.verify_key
 
-        # Serialize the verify key to send it to a third party
-        public_key = verify_key.encode()
+            # Serialize the verify key to send it to a third party
+            public_key = verify_key.encode()
 
-        preprepare_message = signed_preprepare +(b'split')+  public_key
+            preprepare_message = signed_preprepare +(b'split')+  public_key
 
-        self.broadcast_message(nodes_ids_list,preprepare_message)
+            self.broadcast_message(nodes_ids_list,preprepare_message)
+
 
 class FaultyNode(Node): # This node changes digest in prepare message
     def receive(self,waiting_time=0):
@@ -1069,3 +1147,118 @@ class FaultyRepliesNode(Node): # This node sends a fauly reply to the client
         except:
             pass
         return reply
+import random
+
+class ByzantineNode(Node):
+    
+    def receive(self):
+        p_slow = random.uniform(0,1) # The probability of the node being slow (we can fix it or define it as a random value between 0 and 1) + It changes everytime the node receives a message
+        if p_slow < 0.3: # No waiting time
+            Node.receive(self,waiting_time=0)
+        else:
+            #waiting_time = random.randint(1, 5) # If the node has to wait, the waiting time is chosen randomly
+            waiting_time = random.uniform(0,1) # If the node has to wait, the waiting time is chosen randomly
+            Node.receive(self,waiting_time)
+
+    def broadcast_prepare_message(self,preprepare_message,nodes_ids_list): # The node broadcasts a prepare message
+        if (replied_requests[preprepare_message["request"]]==0):
+            # S'assurer des conditions avant d'envoyer le PREPARE message
+
+            p_non_responding = random.uniform(0,1) # The probability that the node does not respond
+            if p_non_responding > 0.7:
+                pass # The node does not respond, we do not do anything
+            else: # The node responds honestly or maliciously
+                p_malicious = random.uniform(0,1) # The probability of the node being malicious
+                if p_malicious<0.3: # The node sends an honest message
+                    pass
+                else: # The node sends a changed message
+                    with open(prepare_format_file):
+                        prepare_format= open(prepare_format_file)
+                        prepare_message = json.load(prepare_format)
+                        prepare_format.close()
+                    prepare_message["view_number"]=self.view_number
+                    prepare_message["sequence_number"]=preprepare_message["sequence_number"]
+                    prepare_message["request_digest"]=preprepare_message["request_digest"]+"abc"
+                    prepare_message["request"]=preprepare_message["request"]
+                    prepare_message["node_id"]=self.node_id
+                    prepare_message["client_id"]=preprepare_message["client_id"]
+                    prepare_message["timestamp"]=preprepare_message["timestamp"]
+
+                    # Generate a new random signing key
+                    signing_key = SigningKey.generate()
+
+                    # Sign the message with the signing key
+                    signed_prepare = signing_key.sign(str(prepare_message).encode())
+
+                    # Obtain the verify key for a given signing key
+                    verify_key = signing_key.verify_key
+
+                    # Serialize the verify key to send it to a third party
+                    public_key = verify_key.encode()
+
+                    prepare_message = signed_prepare +(b'split')+  public_key
+
+                    self.broadcast_message(nodes_ids_list,prepare_message)
+
+                    return prepare_message
+     
+
+    def broadcast_commit_message(self,prepare_message,nodes_ids_list,sequence_number): # The node broadcasts a prepare message
+        if (replied_requests[prepare_message["request"]]==0):
+            # S'assurer des conditions avant d'envoyer le COMMIT message
+
+            p_non_responding = random.uniform(0,1) # The probability that the node does not respond
+            if p_non_responding > 0.7:
+                pass # The node does not respond, we do not do anything
+            else: # The node responds honestly or maliciously
+                p_malicious = random.uniform(0,1) # The probability of the node being malicious
+                if p_malicious<0.3: # The node sends an honest message
+                    pass
+                else: # The node sends a changed message
+                    with open(commit_format_file):
+                        commit_format= open(commit_format_file)
+                        commit_message = json.load(commit_format)
+                        commit_format.close()
+                    commit_message["view_number"]=self.view_number
+                    commit_message["sequence_number"]=prepare_message["sequence_number"]
+                    commit_message["request_digest"]=prepare_message["request_digest"]+"abc"
+                    commit_message["request"]=prepare_message["request"]
+                    commit_message["node_id"]=self.node_id
+                    commit_message["client_id"]=prepare_message["client_id"]
+                    commit_message["timestamp"]=prepare_message["timestamp"]
+
+                    # Generate a new random signing key
+                    signing_key = SigningKey.generate()
+
+                    # Sign the message with the signing key
+                    signed_commit = signing_key.sign(str(commit_message).encode())
+
+                    # Obtain the verify key for a given signing key
+                    verify_key = signing_key.verify_key
+
+                    # Serialize the verify key to send it to a third party
+                    public_key = verify_key.encode()
+
+                    commit_message = signed_commit +(b'split')+  public_key
+
+                    self.broadcast_message(nodes_ids_list,commit_message)
+
+                    return commit_message
+
+
+class DoSAttacker(Node):
+    def receive(self,waiting_time=0):
+        Node.receive(self,waiting_time)
+
+    def send(self,destination_node_id,message):
+        for i in range (20): # The node sends 20 messages instead of one
+            destination_node_port = nodes_ports[destination_node_id]
+            s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            host = socket.gethostname() 
+            try:
+                s.connect((host, destination_node_port))
+                s.send(message)  
+                s.close() 
+            except:
+                pass
