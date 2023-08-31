@@ -2,7 +2,9 @@
 This code improves the traditional PBFT consensus protocol by assigning scores to nodes based on their behavior.
 ## Related paper
 The details of the proposed APBFT protocol can be found on our paper: "APBFT: An Adaptive PBFT Consensus for Private Blockchains".
+
 For citation, please use: 
+
 K. Riahi, M. -e. -A. Brahmia, A. Abouaissa and L. Idoumghar, "APBFT: An Adaptive PBFT Consensus for Private Blockchains," GLOBECOM 2022 - 2022 IEEE Global Communications Conference, Rio de Janeiro, Brazil, 2022, pp. 1788-1793, doi: 10.1109/GLOBECOM48099.2022.10001568.
 ## How to run the code
 We advise opening the whole project in an editor such as VSCode.
